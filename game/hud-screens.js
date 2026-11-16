@@ -73,23 +73,40 @@ export function drawInkMeter(ctx, ink, x, y, w, h) {
 
 export function drawStartScreen(ctx, state, time) {
   ctx.save();
-  ctx.fillStyle = 'rgba(30,41,59,0.38)';
-  ctx.fillRect(0, 0, FIELD.width, FIELD.height);
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#FFF7E0';
+  ctx.fillStyle = 'rgba(30,41,59,0.16)';
+  roundRectPath(ctx, FIELD.width / 2 - 332, 108, 664, 236, 20);
+  ctx.fill();
+  ctx.fillStyle = PALETTE.cream;
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 5;
+  roundRectPath(ctx, FIELD.width / 2 - 340, 100, 680, 236, 20);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = '#D97706';
+  ctx.lineWidth = 2;
+  roundRectPath(ctx, FIELD.width / 2 - 330, 110, 660, 216, 14);
+  ctx.stroke();
+  ctx.fillStyle = PALETTE.text;
   ctx.font = 'bold 96px Georgia, serif';
   ctx.fillText('INKRAIL', FIELD.width / 2, 250);
   ctx.font = 'bold 26px system-ui, sans-serif';
-  ctx.fillStyle = '#FDE68A';
+  ctx.fillStyle = '#B45309';
   ctx.fillText('Draw the Rails · Run the Trains Home', FIELD.width / 2, 295);
-  drawHowTo(ctx, FIELD.width / 2, 360);
-  ctx.fillStyle = '#FFF7E0';
+  drawHowTo(ctx, FIELD.width / 2, 372);
+  ctx.fillStyle = PALETTE.text;
   ctx.font = 'bold 20px system-ui, sans-serif';
   if (state.best > 0) ctx.fillText('BEST SCORE  ' + state.best, FIELD.width / 2, 500);
   drawBigButton(ctx, FIELD.width / 2 - 130, 530, 260, 72, '▶  PLAY', time);
   ctx.font = '16px system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(255,247,224,0.85)';
-  ctx.fillText('10 waves · 3 train classes · the Midnight Express rides on waves 5 & 10', FIELD.width / 2, 650);
+  ctx.fillStyle = 'rgba(30,41,59,0.85)';
+  const line = '10 waves · 3 train classes · the Midnight Express rides on waves 5 & 10';
+  const lw = ctx.measureText(line).width + 28;
+  ctx.fillStyle = 'rgba(255,247,224,0.92)';
+  roundRectPath(ctx, FIELD.width / 2 - lw / 2, 628, lw, 30, 15);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(30,41,59,0.85)';
+  ctx.fillText(line, FIELD.width / 2, 649);
   ctx.restore();
 }
 
@@ -102,9 +119,12 @@ export function drawHowTo(ctx, cx, y) {
   ctx.save();
   items.forEach((item, i) => {
     const x = cx + (i - 1) * 260;
-    ctx.fillStyle = 'rgba(255,247,224,0.92)';
+    ctx.fillStyle = 'rgba(255,247,224,0.95)';
+    ctx.strokeStyle = PALETTE.ink;
+    ctx.lineWidth = 2.5;
     roundRectPath(ctx, x - 110, y, 220, 84, 12);
     ctx.fill();
+    ctx.stroke();
     ctx.font = '34px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(item.icon, x, y + 40);

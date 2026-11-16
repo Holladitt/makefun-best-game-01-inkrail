@@ -1,4 +1,4 @@
-import { getSpawnGate, getStationByColor, getTrainSpec, getWavePlan, RULES, STATIONS } from './config.js';
+import { getSpawnGate, getStationByColor, getTrainSpec, getWavePlan, POPUP, RULES, STATIONS } from './config.js';
 
 // INKRAIL — wave-director.js
 // Runs the 10-wave show: spawn schedule, train kinds per wave, the Midnight
@@ -58,6 +58,10 @@ export function createWaveDirector(state, spawnTrain) {
         director.banner = 'WAVE CLEAR! +250 bonus';
         director.bannerTimer = 2.0;
         state.score += 250;
+        state.popups.push({
+          x: 640, y: 220, text: 'WAVE CLEAR +250',
+          life: POPUP.lifeSec, max: POPUP.lifeSec, big: true,
+        });
         state.pendingWave = true;
       }
     }

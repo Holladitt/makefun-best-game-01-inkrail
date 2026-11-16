@@ -30,24 +30,6 @@ export function getSpawnGate(index) {
 
 export const FIELD = { width: 1280, height: 800 };
 
-export const PALETTE = {
-  paper: '#F3E9D2',
-  paperDark: '#E8D9B8',
-  contour: '#D9C9A3',
-  river: '#BFE3F0',
-  riverDeep: '#8FC8E0',
-  pine: '#4D7C4F',
-  pineDark: '#38603A',
-  wood: '#8B5E34',
-  woodLight: '#A97B4F',
-  ink: '#1E293B',
-  inkSoft: '#334155',
-  text: '#1E293B',
-  textSoft: '#475569',
-  gold: '#B45309',
-  cream: '#FFF7E0',
-};
-
 export const TRAIN_KINDS = {
   cargo: {
     kind: 'cargo', label: 'Cargo', color: '#D97706', speed: 58,
@@ -86,6 +68,30 @@ export const SPAWN_GATES = [
 ];
 
 export const INK = { max: 120, costPerPx: 0.045, regenPerSec: 5, refundRate: 0.8 };
+
+export const POPUP = { lifeSec: 1.8, risePx: 48 };
+
+export const DOCK = { padOffset: 56, padW: 84, padH: 30 };
+
+export const PALETTE = {
+  paper: '#F3E9D2',
+  paperDark: '#E8D9B8',
+  contour: '#D9C9A3',
+  river: '#BFE3F0',
+  riverDeep: '#8FC8E0',
+  pine: '#4D7C4F',
+  pineDark: '#38603A',
+  wood: '#8B5E34',
+  woodLight: '#A97B4F',
+  bridge: '#7A4A21',
+  bridgeDark: '#5C3413',
+  ink: '#1E293B',
+  inkSoft: '#334155',
+  text: '#1E293B',
+  textSoft: '#475569',
+  gold: '#B45309',
+  cream: '#FFF7E0',
+};
 
 export const DRAW = { resamplePx: 24, snapPx: 36, grabPx: 48, erasePx: 14 };
 

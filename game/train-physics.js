@@ -71,6 +71,33 @@ export function drawTrain(ctx, train, time) {
     ctx.restore();
   }
   if (train.moving) drawSmoke(ctx, train, time);
+  if (spec.timerSec > 0 && train.moving) drawTimerArc(ctx, train, time);
+}
+
+export function drawTimerArc(ctx, train, time) {
+  const frac = Math.max(0, Math.min(1, train.timer / train.spec.timerSec));
+  const color = frac > 0.5 ? '#059669' : frac > 0.25 ? '#D97706' : '#DC2626';
+  const blink = frac <= 0.25 && train.timer < 8 ? (Math.sin(time * 10) > 0 ? 1 : 0.25) : 1;
+  const cx = train.x;
+  const cy = train.y - 30;
+  ctx.save();
+  ctx.globalAlpha = blink;
+  ctx.strokeStyle = 'rgba(30,41,59,0.25)';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 15, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 15, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = 'bold 11px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(Math.ceil(Math.max(0, train.timer)) + 's', cx, cy + 4);
+  ctx.restore();
 }
 
 export function drawWaitingRing(ctx, train, time) {
@@ -162,6 +189,26 @@ function drawLoco(ctx, spec, isBoss) {
   ctx.arc(-w / 2 + 8, h / 2 - 1, 3, 0, Math.PI * 2);
   ctx.arc(w / 2 - 8, h / 2 - 1, 3, 0, Math.PI * 2);
   ctx.fill();
+  if (isBoss) {
+    ctx.fillStyle = '#FDE68A';
+    ctx.strokeStyle = '#B45309';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-10, -h / 2 - 2);
+    ctx.lineTo(-10, -h / 2 - 12);
+    ctx.lineTo(-5, -h / 2 - 6);
+    ctx.lineTo(0, -h / 2 - 14);
+    ctx.lineTo(5, -h / 2 - 6);
+    ctx.lineTo(10, -h / 2 - 12);
+    ctx.lineTo(10, -h / 2 - 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#B45309';
+    ctx.beginPath();
+    ctx.arc(0, -h / 2 - 14, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawCar(ctx, spec) {
@@ -180,12 +227,16 @@ function drawSmoke(ctx, train, time) {
   const bx = train.x - Math.cos(train.angle) * 22;
   const by = train.y - Math.sin(train.angle) * 22;
   ctx.save();
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  const puff = (time * 1.6 + train.id * 0.37) % 1;
-  ctx.beginPath();
-  ctx.arc(bx - Math.cos(train.angle) * puff * 30, by - Math.sin(train.angle) * puff * 30 - puff * 18, 3 + puff * 6, 0, Math.PI * 2);
-  ctx.globalAlpha = 0.55 * (1 - puff);
-  ctx.fill();
+  for (let k = 0; k < 3; k += 1) {
+    const puff = (time * 0.9 + train.id * 0.37 + k * 0.33) % 1;
+    const px = bx - Math.cos(train.angle) * puff * 42;
+    const py = by - Math.sin(train.angle) * puff * 42 - puff * 26;
+    ctx.globalAlpha = 0.65 * (1 - puff);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(px, py, 4 + puff * 8, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 

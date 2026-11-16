@@ -1,4 +1,4 @@
-import { DECOR, FIELD, INK, PALETTE, RULES, STATIONS } from './config.js';
+import { DECOR, DOCK, FIELD, INK, PALETTE, POPUP, RULES, STATIONS } from './config.js';
 import { createTrackDrawer } from './track-drawer.js';
 import { createTrain, drawTrain, drawWaitingRing, moveTrainAlongTrack, trackLengthOf } from './train-physics.js';
 import { createWaveDirector } from './wave-director.js';
@@ -32,7 +32,7 @@ export function startInkrailGame(canvas) {
       trains: [], stations: STATIONS, nextTrainId: 1, nextTrackId: 1,
       nextGate: 0, pendingWave: false, endReason: '',
       best: readBest(),
-      particles: [], demo: true, autopilot: false, autoTimer: 0,
+      particles: [], popups: [], demo: true, autopilot: false, autoTimer: 0,
     };
   }
 
@@ -104,6 +104,7 @@ export function startInkrailGame(canvas) {
     });
     if (state.autopilot || state.phase === 'start') runAutopilot(game, dt);
     updateParticles(dt);
+    updatePopups(dt);
     if (state.phase === 'gameover' || state.phase === 'victory') {
       if (state.score > state.best) {
         state.best = state.score;
@@ -126,6 +127,11 @@ export function startInkrailGame(canvas) {
     if (checkDelivery(train, track, state)) {
       train.delivered = true;
       const gained = scoreDelivery(state, train);
+      const comboText = state.combo > 1 ? ' COMBO x' + state.combo + '!' : '';
+      state.popups.push({
+        x: train.x, y: train.y - 44, text: '+' + gained + comboText,
+        life: POPUP.lifeSec, max: POPUP.lifeSec, big: state.combo > 1,
+      });
       burst(train.x, train.y, train.spec.color, 22);
       burst(train.x, train.y, '#FDE68A', 14);
       sound.playDing();
@@ -156,6 +162,14 @@ export function startInkrailGame(canvas) {
     state.particles = state.particles.filter((p) => p.life > 0);
   }
 
+  function updatePopups(dt) {
+    for (const p of state.popups) {
+      p.y -= (POPUP.risePx / POPUP.lifeSec) * dt;
+      p.life -= dt;
+    }
+    state.popups = state.popups.filter((p) => p.life > 0);
+  }
+
   function runAutopilot(game, dt) {
     state.autoTimer -= dt;
     if (state.autoTimer > 0 || state.phase === 'start' && state.trains.length > 3) return;
@@ -180,6 +194,8 @@ export function startInkrailGame(canvas) {
     drawMap(ctx, state.time);
     drawer.drawTracks(ctx);
     drawer.drawPreview(ctx);
+    drawStations(ctx, state.time, drawer.tracks);
+    drawBossTarget(ctx, state, state.time);
     for (const train of state.trains) {
       if (train.moving) {
         drawTrain(ctx, train, state.time);
@@ -189,6 +205,7 @@ export function startInkrailGame(canvas) {
       }
     }
     drawParticles(ctx);
+    drawPopups(ctx);
     if (state.phase === 'play' || state.phase === 'paused') drawHud(ctx, state);
     drawBanner(ctx, director.banner, director.bannerTimer);
     if (state.phase === 'start') drawStartScreen(ctx, state, state.time);
@@ -214,6 +231,53 @@ export function startInkrailGame(canvas) {
       ctx.fill();
       ctx.restore();
     }
+  }
+
+  function drawPopups(ctx) {
+    for (const p of state.popups) {
+      const frac = Math.max(0, p.life / p.max);
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, frac * 1.6);
+      ctx.font = 'bold ' + (p.big ? 26 : 21) + 'px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(30,41,59,0.85)';
+      ctx.strokeText(p.text, p.x, p.y);
+      ctx.fillStyle = p.big ? '#FDE68A' : '#FFF7E0';
+      ctx.fillText(p.text, p.x, p.y);
+      ctx.restore();
+    }
+  }
+
+  function drawBossTarget(ctx, state, time) {
+    const boss = state.trains.find((t) => t.kind === 'boss' && !t.delivered && !t.lost);
+    if (!boss) return;
+    const s = boss.station;
+    const pulse = 1 + Math.sin(time * 4) * 0.12;
+    ctx.save();
+    ctx.strokeStyle = '#DC2626';
+    ctx.lineWidth = 4;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 72 * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 0.45;
+    ctx.strokeStyle = '#FCA5A5';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 82 * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#7F1D1D';
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    const label = '★ BOSS TARGET ★';
+    const w = ctx.measureText(label).width + 20;
+    roundRectPath(ctx, s.x - w / 2, s.y - 92, w, 26, 8);
+    ctx.fill();
+    ctx.fillStyle = '#FDE68A';
+    ctx.fillText(label, s.x, s.y - 74);
+    ctx.restore();
   }
 
   function bindInput(game) {
@@ -293,6 +357,7 @@ export function startInkrailGame(canvas) {
     state.wave = 0;
     state.trains = [];
     state.particles = [];
+    state.popups = [];
     state.lastDeliveryAt = -99;
     state.pendingWave = false;
     state.endReason = '';
@@ -311,6 +376,11 @@ export function startInkrailGame(canvas) {
       state.autopilot = true;
       resetState();
       state.phase = 'play';
+      state.score = 1850;
+      state.delivered = 14;
+      state.combo = 3;
+      state.lives = 3;
+      state.lastDeliveryAt = 0;
       director.wave = 4;
       state.wave = 4;
       director.startNextWave();
@@ -349,7 +419,12 @@ export function drawMap(ctx, time) {
   }
   drawRiver(ctx);
   for (const [x, y] of DECOR.pines) drawPine(ctx, x, y);
-  for (const s of STATIONS) drawStation(ctx, s, time);
+  ctx.restore();
+}
+
+export function drawStations(ctx, time, tracks) {
+  ctx.save();
+  for (const s of STATIONS) drawStation(ctx, s, time, tracks);
   ctx.restore();
 }
 
@@ -391,13 +466,14 @@ export function drawPine(ctx, x, y) {
   ctx.restore();
 }
 
-export function drawStation(ctx, s, time) {
+export function drawStation(ctx, s, time, tracks) {
   ctx.save();
   ctx.translate(s.x, s.y);
   ctx.fillStyle = 'rgba(30,41,59,0.12)';
   ctx.beginPath();
   ctx.ellipse(0, 26, 64, 12, 0, 0, Math.PI * 2);
   ctx.fill();
+  drawDockPad(ctx, s, tracks);
   ctx.fillStyle = '#FFF7E0';
   ctx.strokeStyle = s.color;
   ctx.lineWidth = 4;
@@ -418,6 +494,45 @@ export function drawStation(ctx, s, time) {
   ctx.font = '11px system-ui, sans-serif';
   ctx.fillStyle = PALETTE.textSoft;
   ctx.fillText(s.name.split(' ').slice(1).join(' ') || 'STATION', 0, 22);
+  ctx.restore();
+}
+
+function drawDockPad(ctx, s, tracks) {
+  let cx;
+  let cy;
+  let angle;
+  const target = tracks ? tracks.filter((t) => t.stationId === s.id).pop() : null;
+  if (target && target.points.length >= 2) {
+    const last = target.points[target.points.length - 1];
+    const prev = target.points[target.points.length - 2];
+    cx = last.x - s.x;
+    cy = last.y - s.y;
+    angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+  } else {
+    const dx = FIELD.width / 2 - s.x;
+    const dy = FIELD.height / 2 - s.y;
+    const len = Math.hypot(dx, dy) || 1;
+    cx = (dx / len) * DOCK.padOffset;
+    cy = (dy / len) * DOCK.padOffset;
+    angle = Math.atan2(dy, dx);
+  }
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.fillStyle = PALETTE.woodLight;
+  ctx.strokeStyle = PALETTE.wood;
+  ctx.lineWidth = 2;
+  roundRectPath(ctx, -DOCK.padW / 2, -DOCK.padH / 2, DOCK.padW, DOCK.padH, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = PALETTE.wood;
+  ctx.lineWidth = 1.5;
+  for (let i = -1; i <= 1; i += 1) {
+    ctx.beginPath();
+    ctx.moveTo(i * 22, -DOCK.padH / 2 + 3);
+    ctx.lineTo(i * 22, DOCK.padH / 2 - 3);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 

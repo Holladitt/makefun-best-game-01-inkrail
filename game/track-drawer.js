@@ -1,8 +1,11 @@
-import { DRAW, INK, PALETTE, STATIONS } from './config.js';
+import { DECOR, DOCK, DRAW, FIELD, INK, PALETTE, STATIONS } from './config.js';
 
 // INKRAIL — track-drawer.js
 // Owns every drawn rail: drag input, resampling, spline smoothing, snapping,
 // live ink-cost preview, sharp-turn warnings and right-click erase with refund.
+// v2: rails snap to the station docking pad (in front of the building), every
+// rail wears wooden sleepers and direction chevrons, and spans that cross the
+// river ride a wooden bridge with side rails.
 
 export function createTrackDrawer(state) {
   const drawer = {
@@ -16,6 +19,7 @@ export function createTrackDrawer(state) {
     extendTrack,
     drawTracks,
     drawPreview,
+    riverSpans,
   };
   return drawer;
 
@@ -37,8 +41,9 @@ export function createTrackDrawer(state) {
     const last = raw[raw.length - 1];
     if (Math.hypot(x - last.x, y - last.y) < 6) return;
     raw.push({ x, y });
-    const snapped = snapPoint({ x, y }, drawer.active.train);
-    const smooth = smoothTrack(raw, snapped);
+    const snapped = snapPoint({ x, y }, drawer.active.train, raw);
+    const useRaw = snapped.station ? truncateBeforeDock(raw, snapped.station) : raw;
+    const smooth = smoothTrack(useRaw, snapped);
     const cost = trackLength(smooth) * INK.costPerPx;
     const tooSharp = maxTurnCoarse(smooth) > drawer.active.train.spec.maxTurnDeg;
     drawer.preview = { points: smooth, cost, tooSharp, end: snapped };
@@ -47,8 +52,9 @@ export function createTrackDrawer(state) {
   function pointerUp() {
     if (!drawer.active || !drawer.preview) { drawer.active = null; drawer.preview = null; return null; }
     const { train, raw } = drawer.active;
-    const snapped = snapPoint(raw[raw.length - 1], train);
-    const smooth = smoothTrack(raw, snapped);
+    const snapped = snapPoint(raw[raw.length - 1], train, raw);
+    const useRaw = snapped.station ? truncateBeforeDock(raw, snapped.station) : raw;
+    const smooth = smoothTrack(useRaw, snapped);
     const realLength = trackLength(smooth);
     const cost = realLength * INK.costPerPx;
     const tooSharp = maxTurnCoarse(smooth) > train.spec.maxTurnDeg;
@@ -122,8 +128,13 @@ export function createTrackDrawer(state) {
 
   function drawTracks(ctx) {
     for (const track of drawer.tracks) {
+      const spans = riverSpans(track.points);
+      for (const span of spans) drawBridgeDeck(ctx, span.points);
       drawRail(ctx, track.points, PALETTE.ink, 7);
       drawRail(ctx, track.points, '#F8F1DE', 2);
+      drawSleepers(ctx, track.points);
+      drawChevrons(ctx, track.points);
+      for (const span of spans) drawBridgeRails(ctx, span.points);
     }
   }
 
@@ -132,23 +143,44 @@ export function createTrackDrawer(state) {
     if (!p || p.points.length < 2) return;
     ctx.save();
     ctx.setLineDash([10, 8]);
-    const color = p.tooSharp ? '#DC2626' : drawer.active.train.spec.color;
+    const color = p.tooSharp ? '#DC2626' : PALETTE.ink;
     drawRail(ctx, p.points, color, 6);
     ctx.setLineDash([]);
     ctx.fillStyle = p.tooSharp ? '#DC2626' : PALETTE.text;
     ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.fillText(
-      p.tooSharp ? 'TOO SHARP for ' + drawer.active.train.spec.label + '!' : 'Ink ' + Math.round(p.cost),
-      p.points[p.points.length - 1].x + 12, p.points[p.points.length - 1].y - 10,
-    );
+    const label = p.tooSharp ? 'TOO SHARP for ' + drawer.active.train.spec.label + '!' : '-' + Math.round(p.cost) + ' INK';
+    const end = p.points[p.points.length - 1];
+    if (end.y < 90 && !p.tooSharp) {
+      ctx.textAlign = 'right';
+      ctx.fillText(label, end.x - 12, end.y + 6);
+      ctx.textAlign = 'left';
+    } else {
+      ctx.fillText(label, end.x + 12, end.y - 10);
+    }
     ctx.restore();
   }
 
-  function snapPoint(p, train) {
+  function snapPoint(p, train, raw) {
     for (const s of STATIONS) {
-      if (Math.hypot(p.x - s.x, p.y - s.y) < DRAW.snapPx) return { x: s.x, y: s.y, stationId: s.id };
+      if (Math.hypot(p.x - s.x, p.y - s.y) < DRAW.snapPx) {
+        let from = null;
+        if (raw) {
+          for (let i = raw.length - 1; i >= 0; i -= 1) {
+            if (Math.hypot(raw[i].x - s.x, raw[i].y - s.y) >= DOCK.padOffset) { from = raw[i]; break; }
+          }
+        }
+        const dock = dockPoint(s, from);
+        return { x: dock.x, y: dock.y, stationId: s.id, station: s };
+      }
     }
-    return { x: p.x, y: p.y, stationId: null };
+    return { x: p.x, y: p.y, stationId: null, station: null };
+  }
+
+  function truncateBeforeDock(raw, station) {
+    for (let i = 0; i < raw.length; i += 1) {
+      if (Math.hypot(raw[i].x - station.x, raw[i].y - station.y) < DOCK.padOffset) return raw.slice(0, i);
+    }
+    return raw;
   }
 }
 
@@ -227,6 +259,160 @@ function catmull(p0, p1, p2, p3, t) {
     x: 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
     y: 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
   };
+}
+
+export function dockPoint(station, fromPoint) {
+  let dx = FIELD.width / 2 - station.x;
+  let dy = FIELD.height / 2 - station.y;
+  if (fromPoint) {
+    const fx = fromPoint.x - station.x;
+    const fy = fromPoint.y - station.y;
+    if (Math.hypot(fx, fy) >= 1) { dx = fx; dy = fy; }
+  }
+  const len = Math.hypot(dx, dy) || 1;
+  return {
+    x: station.x + (dx / len) * DOCK.padOffset,
+    y: station.y + (dy / len) * DOCK.padOffset,
+  };
+}
+
+export function riverSpans(points) {
+  if (!points || points.length < 2) return [];
+  const spans = [];
+  let current = null;
+  const step = 8;
+  let acc = 0;
+  let prev = points[0];
+  const samples = [points[0]];
+  for (let i = 1; i < points.length; i += 1) {
+    const seg = Math.hypot(points[i].x - prev.x, points[i].y - prev.y);
+    acc += seg;
+    if (acc >= step) {
+      samples.push(points[i]);
+      acc = 0;
+    }
+    prev = points[i];
+  }
+  if (samples[samples.length - 1] !== points[points.length - 1]) samples.push(points[points.length - 1]);
+  for (const p of samples) {
+    const over = distToRiver(p) < 20;
+    if (over && !current) current = { points: [p] };
+    else if (over) current.points.push(p);
+    else if (current) {
+      if (current.points.length >= 2) spans.push(current);
+      current = null;
+    }
+  }
+  if (current && current.points.length >= 2) spans.push(current);
+  return spans;
+}
+
+function distToRiver(p) {
+  let best = Infinity;
+  const river = DECOR.river;
+  for (let i = 0; i < river.length - 1; i += 1) {
+    const a = { x: river[i][0], y: river[i][1] };
+    const b = { x: river[i + 1][0], y: river[i + 1][1] };
+    best = Math.min(best, distToSeg(p.x, p.y, a, b));
+  }
+  return best;
+}
+
+function drawBridgeDeck(ctx, points) {
+  if (points.length < 2) return;
+  ctx.save();
+  ctx.strokeStyle = PALETTE.bridge;
+  ctx.lineWidth = 16;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i].x, points[i].y);
+  ctx.stroke();
+  ctx.strokeStyle = PALETTE.bridgeDark;
+  ctx.lineWidth = 1.5;
+  walkPoints(points, 12, (p, angle) => {
+    const nx = Math.cos(angle + Math.PI / 2);
+    const ny = Math.sin(angle + Math.PI / 2);
+    ctx.beginPath();
+    ctx.moveTo(p.x - nx * 8, p.y - ny * 8);
+    ctx.lineTo(p.x + nx * 8, p.y + ny * 8);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawBridgeRails(ctx, points) {
+  ctx.save();
+  ctx.strokeStyle = PALETTE.bridgeDark;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    walkPoints(points, 6, (p, angle, first) => {
+      const nx = Math.cos(angle + Math.PI / 2) * 11 * side;
+      const ny = Math.sin(angle + Math.PI / 2) * 11 * side;
+      if (first) ctx.moveTo(p.x + nx, p.y + ny);
+      else ctx.lineTo(p.x + nx, p.y + ny);
+    });
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawSleepers(ctx, points) {
+  ctx.save();
+  ctx.strokeStyle = PALETTE.wood;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  walkPoints(points, 26, (p, angle) => {
+    const nx = Math.cos(angle + Math.PI / 2);
+    const ny = Math.sin(angle + Math.PI / 2);
+    ctx.beginPath();
+    ctx.moveTo(p.x - nx * 7, p.y - ny * 7);
+    ctx.lineTo(p.x + nx * 7, p.y + ny * 7);
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawChevrons(ctx, points) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(248,241,222,0.9)';
+  let n = 0;
+  walkPoints(points, 90, (p, angle) => {
+    n += 1;
+    if (n % 2 === 0) return;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(6, 0);
+    ctx.lineTo(-4, -5);
+    ctx.lineTo(-4, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+function walkPoints(points, step, cb) {
+  if (points.length < 2) return;
+  let acc = 0;
+  let first = true;
+  cb(points[0], Math.atan2(points[1].y - points[0].y, points[1].x - points[0].x), true);
+  for (let i = 1; i < points.length; i += 1) {
+    const seg = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    const angle = Math.atan2(points[i].y - points[i - 1].y, points[i].x - points[i - 1].x);
+    acc += seg;
+    if (acc >= step) {
+      cb(points[i], angle, false);
+      acc = 0;
+      first = false;
+    }
+  }
+  void first;
 }
 
 function drawRail(ctx, points, color, width) {
