@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="INKRAIL — draw the rails, run the trains home. A make.fun best-game-01 entry.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23DC2626'/%3E%3Ctext x='16' y='22' font-size='18' text-anchor='middle' fill='%23FFF7E0'%3E🚂%3C/text%3E%3C/svg%3E">
+<title>INKRAIL — Draw the Rails, Run the Trains Home</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<main class="stage">
+  <canvas id="game" width="1280" height="800" aria-label="INKRAIL game canvas" tabindex="0"></canvas>
+  <p class="hint">Drag from a train to draw its rail · Right-click a rail to erase · Space pauses · R restarts</p>
+  <noscript><p class="hint">INKRAIL needs JavaScript to run.</p></noscript>
+</main>
+<script type="module">
+  import { startInkrailGame } from './main-loop.js';
+  const canvas = document.getElementById('game');
+  startInkrailGame(canvas);
+</script>
+</body>
+</html>
