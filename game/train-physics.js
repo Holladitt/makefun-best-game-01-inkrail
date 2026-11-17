@@ -27,6 +27,7 @@ export function moveTrainAlongTrack(train, track, dt, state) {
   if (next >= total) {
     train.distance = total;
     placeTrainOnTrack(train, track);
+    followCars(train, track);
     return 'arrived';
   }
   train.distance = next;
@@ -40,7 +41,13 @@ export function placeTrainOnTrack(train, track) {
   const ahead = pointAtDistance(track.points, Math.min(train.distance + 12, trackLengthOf(track)));
   train.x = pos.x;
   train.y = pos.y;
-  train.angle = Math.atan2(ahead.y - pos.y, ahead.x - pos.x);
+  const tangentStart = train.distance >= trackLengthOf(track)
+    ? pointAtDistance(track.points, Math.max(0, train.distance - 12))
+    : pos;
+  train.angle = Math.atan2(
+    ahead.y - tangentStart.y,
+    ahead.x - tangentStart.x
+  );
 }
 
 export function followCars(train, track) {
@@ -100,6 +107,62 @@ export function drawTimerArc(ctx, train, time) {
   ctx.restore();
 }
 
+function clampCenteredGlyph(x, baseline, m, minX, maxX, minY, maxY) {
+  const w = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
+  const h = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+  let left = x - m.actualBoundingBoxLeft;
+  let top = baseline - m.actualBoundingBoxAscent;
+  if (w > maxX - minX) {
+    left = minX;
+  } else {
+    if (left < minX) left = minX;
+    if (left + w > maxX) left = maxX - w;
+  }
+  if (minY !== undefined && maxY !== undefined) {
+    if (h > maxY - minY) {
+      top = minY;
+    } else {
+      if (top < minY) top = minY;
+      if (top + h > maxY) top = maxY - h;
+    }
+  }
+  return {
+    left, right: left + w, top, bottom: top + h,
+    x: left + m.actualBoundingBoxLeft,
+    baseline: top + m.actualBoundingBoxAscent,
+  };
+}
+
+// Shared waiting-label layout: measures the exact strings, fonts, alignments
+// and baselines actually drawn for a stopped train, and returns the final
+// destination / countdown glyph boxes (with the anchor x / baseline to draw
+// at). drawWaitingRing draws from it; track-drawer reuses the same boxes as
+// preview-label obstacles so the two never disagree.
+export function waitingLabelLayout(ctx, train) {
+  ctx.font = 'bold 11px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  const destText = train.station.name.toUpperCase();
+  const dm = ctx.measureText(destText);
+  const destBaseline = train.y < 70 ? train.y + 58 : train.y - 32;
+  const dest = clampCenteredGlyph(train.x, destBaseline, dm, 12, 1268);
+  const layout = { dest };
+  if (train.spec.timerSec > 0) {
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    const cdText = Math.ceil(Math.max(0, train.timer)) + 's';
+    const cm = ctx.measureText(cdText);
+    const cdBaseline = train.y > FIELD.height - 70 ? train.y - 52 : train.y + 42;
+    let countdown = clampCenteredGlyph(train.x, cdBaseline, cm, 12, 1268, 66, 788);
+    if (train.y > FIELD.height - 70) {
+      const excess = countdown.bottom - (dest.top - 4);
+      if (excess > 0) {
+        countdown = clampCenteredGlyph(train.x, cdBaseline - excess, cm, 12, 1268, 66, 788);
+      }
+    }
+    layout.countdown = countdown;
+  }
+  return layout;
+}
+
 export function drawWaitingRing(ctx, train, time) {
   const pulse = 1 + Math.sin(time * 4) * 0.08;
   ctx.save();
@@ -111,15 +174,15 @@ export function drawWaitingRing(ctx, train, time) {
   ctx.stroke();
   ctx.globalAlpha = 1;
   ctx.fillStyle = train.spec.color;
+  const layout = waitingLabelLayout(ctx, train);
   ctx.font = 'bold 11px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  const labelY = train.y < 70 ? train.y + 58 : train.y - 32;
-  ctx.fillText(train.station.name.toUpperCase(), train.x, labelY);
-  if (train.spec.timerSec > 0) {
+  ctx.fillText(train.station.name.toUpperCase(), layout.dest.x, layout.dest.baseline);
+  if (layout.countdown) {
     const left = Math.max(0, train.timer);
     ctx.fillStyle = left < 8 ? '#DC2626' : '#1E293B';
     ctx.font = 'bold 15px system-ui, sans-serif';
-    ctx.fillText(Math.ceil(left) + 's', train.x, train.y + 42);
+    ctx.fillText(Math.ceil(left) + 's', layout.countdown.x, layout.countdown.baseline);
   }
   ctx.restore();
 }

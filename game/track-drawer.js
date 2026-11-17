@@ -1,4 +1,5 @@
 import { DECOR, DOCK, DRAW, FIELD, INK, PALETTE, STATIONS } from './config.js';
+import { waitingLabelLayout } from './train-physics.js';
 
 // INKRAIL — track-drawer.js
 // Owns every drawn rail: drag input, resampling, spline smoothing, snapping,
@@ -26,8 +27,8 @@ export function createTrackDrawer(state) {
   function pointerDown(x, y) {
     const train = trainNear(x, y);
     if (train) {
-      drawer.active = { train, raw: [{ x, y }] };
-      drawer.preview = { points: [{ x, y }], cost: 0, tooSharp: false };
+      drawer.active = { train, raw: [{ x: train.x, y: train.y }] };
+      drawer.preview = { points: [{ x: train.x, y: train.y }], cost: 0, tooSharp: false };
       drawer.hint = '';
       return true;
     }
@@ -52,6 +53,11 @@ export function createTrackDrawer(state) {
   function pointerUp() {
     if (!drawer.active || !drawer.preview) { drawer.active = null; drawer.preview = null; return null; }
     const { train, raw } = drawer.active;
+    if (train.lost || train.delivered || !state.trains.includes(train)) {
+      drawer.active = null;
+      drawer.preview = null;
+      return null;
+    }
     const snapped = snapPoint(raw[raw.length - 1], train, raw);
     const useRaw = snapped.station ? truncateBeforeDock(raw, snapped.station) : raw;
     const smooth = smoothTrack(useRaw, snapped);
@@ -77,6 +83,8 @@ export function createTrackDrawer(state) {
     };
     drawer.tracks.push(track);
     train.trackId = track.id;
+    train.distance = 0;
+    train.cars = [];
     train.moving = true;
     return track;
   }
@@ -84,7 +92,9 @@ export function createTrackDrawer(state) {
   function eraseAt(x, y) {
     const track = trackAt(x, y);
     if (!track) return false;
-    const train = state.trains.find((t) => t.id === track.trainId);
+    const train = state.trains.find(
+      (t) => t.id === track.trainId && t.trackId === track.id
+    );
     if (train && train.moving) { drawer.hint = 'Cannot erase a rail with a train on it!'; return false; }
     drawer.tracks = drawer.tracks.filter((t) => t !== track);
     state.ink = Math.min(INK.max, state.ink + track.cost * INK.refundRate);
@@ -150,18 +160,84 @@ export function createTrackDrawer(state) {
     const color = p.tooSharp ? '#DC2626' : PALETTE.ink;
     drawRail(ctx, p.points, color, 6);
     ctx.setLineDash([]);
+    const obstacles = previewObstacles(ctx);
     ctx.fillStyle = p.tooSharp ? '#DC2626' : PALETTE.text;
     ctx.font = 'bold 16px system-ui, sans-serif';
+    ctx.textAlign = 'left';
     const label = p.tooSharp ? 'TOO SHARP for ' + drawer.active.train.spec.label + '!' : '-' + Math.round(p.cost) + ' INK';
     const end = p.points[p.points.length - 1];
-    if (end.y < 90 && !p.tooSharp) {
-      ctx.textAlign = 'right';
-      ctx.fillText(label, end.x - 12, end.y + 6);
-      ctx.textAlign = 'left';
-    } else {
-      ctx.fillText(label, end.x + 12, end.y - 10);
-    }
+    const m = ctx.measureText(label);
+    const placed = placePreviewLabel(m, end, p.tooSharp, obstacles);
+    if (placed) ctx.fillText(label, placed.x, placed.y);
     ctx.restore();
+  }
+
+  // Obstacles the preview cost label must not cover: every station's
+  // expanded building/shadow box plus the final waiting-label boxes of all
+  // unresolved stopped trains (same layout drawWaitingRing uses).
+  function previewObstacles(ctx) {
+    const boxes = [];
+    for (const s of STATIONS) {
+      boxes.push({ left: s.x - 64, right: s.x + 64, top: s.y - 64, bottom: s.y + 50 });
+    }
+    for (const t of state.trains) {
+      if (t.delivered || t.lost || t.moving) continue;
+      const layout = waitingLabelLayout(ctx, t);
+      boxes.push(layout.dest);
+      if (layout.countdown) boxes.push(layout.countdown);
+    }
+    return boxes;
+  }
+
+  // First surviving candidate wins; the label is omitted when none fits.
+  // Candidates are glyph boxes measured with textAlign='left'; the returned
+  // anchor draws the same box with that alignment.
+  function placePreviewLabel(m, end, tooSharp, obstacles) {
+    const w = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
+    const h = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+    const candidates = [];
+    if (end.y < 90 && !tooSharp) {
+      // Existing right-aligned placement at (end.x-12, end.y+6), as a glyph
+      // box: the advance ends at the anchor, so the box starts one advance
+      // width to its left.
+      candidates.push({
+        left: end.x - 12 - m.width - m.actualBoundingBoxLeft,
+        right: end.x - 12 - m.width + m.actualBoundingBoxRight,
+        top: end.y + 6 - m.actualBoundingBoxAscent,
+        bottom: end.y + 6 + m.actualBoundingBoxDescent,
+      });
+    }
+    candidates.push({
+      left: end.x - w / 2, right: end.x + w / 2,
+      top: end.y - 16 - h, bottom: end.y - 16,
+    });
+    candidates.push({
+      left: end.x - w / 2, right: end.x + w / 2,
+      top: end.y + 16, bottom: end.y + 16 + h,
+    });
+    candidates.push({
+      left: end.x - 16 - w, right: end.x - 16,
+      top: end.y - h / 2, bottom: end.y + h / 2,
+    });
+    candidates.push({
+      left: end.x + 16, right: end.x + 16 + w,
+      top: end.y - h / 2, bottom: end.y + h / 2,
+    });
+    for (const box of candidates) {
+      const bw = box.right - box.left;
+      const bh = box.bottom - box.top;
+      if (bw > 1256 || bh > 722) continue;
+      const left = Math.max(12, Math.min(box.left, 1268 - bw));
+      const top = Math.max(66, Math.min(box.top, 788 - bh));
+      const clamped = { left, right: left + bw, top, bottom: top + bh };
+      if (obstacles.some((o) => clamped.left < o.right && clamped.right > o.left
+        && clamped.top < o.bottom && clamped.bottom > o.top)) continue;
+      return {
+        x: clamped.left + m.actualBoundingBoxLeft,
+        y: clamped.top + m.actualBoundingBoxAscent,
+      };
+    }
+    return null;
   }
 
   function snapPoint(p, train, raw) {

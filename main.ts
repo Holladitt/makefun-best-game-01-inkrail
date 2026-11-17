@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -13,6 +13,8 @@ export function handInGame() {
   const here = fileURLToPath(new URL('.', import.meta.url));
   const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
   mkdirSync(out, { recursive: true });
+  rmSync(join(out, 'game'), { recursive: true, force: true });
+  rmSync(join(out, 'screenshots'), { recursive: true, force: true });
   cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
   mkdirSync(join(out, 'screenshots'), { recursive: true });
   if (existsSync(join(here, 'screenshots'))) {

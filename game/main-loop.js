@@ -1,6 +1,6 @@
 import { DECOR, DOCK, FIELD, INK, PALETTE, POPUP, RULES, STATIONS } from './config.js';
 import { createTrackDrawer } from './track-drawer.js';
-import { createTrain, drawTrain, drawWaitingRing, moveTrainAlongTrack, trackLengthOf } from './train-physics.js';
+import { createTrain, drawTrain, drawWaitingRing, moveTrainAlongTrack } from './train-physics.js';
 import { createWaveDirector } from './wave-director.js';
 import { checkDelivery, checkExpressTimers, checkTrainCollisions, resolveTrainLost, scoreDelivery } from './collision-rules.js';
 import { drawBanner, drawEndScreen, drawHud, drawPauseOverlay, drawStartScreen } from './hud-screens.js';
@@ -27,6 +27,26 @@ export function startInkrailGame(canvas) {
   const sound = createSoundSynth();
   const director = createWaveDirector(state, spawnTrain);
   const game = { state, drawer, sound, director, canvas, ctx };
+  let drawingPointerId = null;
+
+  function cancelDrawing() {
+    sound.stopScratch();
+    drawer.active = null;
+    drawer.preview = null;
+    const id = drawingPointerId;
+    drawingPointerId = null;
+    if (id !== null && canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+  }
+
+  function togglePause() {
+    if (state.phase === 'play') {
+      cancelDrawing();
+      state.phase = 'paused';
+    } else if (state.phase === 'paused') {
+      state.phase = 'play';
+    }
+  }
+
   bindInput(game);
   applyShotMode(game);
   if (state.phase === 'start' && director.wave === 0) director.startNextWave();
@@ -36,7 +56,7 @@ export function startInkrailGame(canvas) {
 
   function createState() {
     return {
-      phase: 'start', time: 0, score: 0, combo: 0, delivered: 0,
+      phase: 'start', time: 0, playTime: 0, score: 0, combo: 0, delivered: 0,
       lives: RULES.lives, ink: INK.max, wave: 0, lastDeliveryAt: -99,
       trains: [], stations: STATIONS, nextTrainId: 1, nextTrackId: 1,
       nextGate: 0, pendingWave: false, endReason: '',
@@ -86,17 +106,19 @@ export function startInkrailGame(canvas) {
     const dt = Math.min(0.05, (now - (game.lastT || now)) / 1000 || 0.016);
     game.lastT = now;
     state.time += dt;
+    if (state.phase === 'play') state.playTime += dt;
     if (state.phase === 'play' || state.phase === 'start') update(game, dt);
     render(game);
     requestAnimationFrame((t) => frame(game, t));
   }
 
   function update(game, dt) {
+    const wasPlaying = state.phase === 'play';
     state.ink = Math.min(INK.max, Math.max(0, state.ink + INK.regenPerSec * dt));
     if (state.ink < 0.01) state.ink = 0;
     if (INK.max - state.ink < 0.01) state.ink = INK.max;
     if (state.flash > 0) state.flash = Math.max(0, state.flash - dt * 2.8);
-    if (state.wave > state.bestWave) {
+    if (wasPlaying && state.wave > state.bestWave) {
       state.bestWave = state.wave;
       saveBestWave(state.bestWave);
     }
@@ -134,10 +156,14 @@ export function startInkrailGame(canvas) {
       state.trains = state.trains.filter((x) => !x.lost);
       director.onTrainResolved();
     });
+    if (drawer.active &&
+        (drawer.active.train.lost || drawer.active.train.delivered ||
+         !state.trains.includes(drawer.active.train))) cancelDrawing();
     if (state.autopilot || state.phase === 'start') runAutopilot(game, dt);
     updateParticles(dt);
     updatePopups(dt);
-    if (state.phase === 'gameover' || state.phase === 'victory') {
+    if (wasPlaying && (state.phase === 'gameover' || state.phase === 'victory')) {
+      cancelDrawing();
       state.isNewBest = state.score > state.best;
       if (state.score > state.best) {
         state.best = state.score;
@@ -168,8 +194,10 @@ export function startInkrailGame(canvas) {
       if (state.combo > state.bestCombo) state.bestCombo = state.combo;
       const comboText = state.combo > 1 ? ' COMBO x' + state.combo + '!' : '';
       state.popups.push({
-        x: train.x, y: train.y - 44, text: '+' + gained + comboText,
+        x: train.station.x < FIELD.width / 2 ? 360 : 920,
+        y: train.station.y + 70, text: '+' + gained + comboText,
         life: POPUP.lifeSec, max: POPUP.lifeSec, big: state.combo > 1,
+        delivery: true,
       });
       if (state.combo >= 3) {
         state.popups.push({
@@ -303,9 +331,15 @@ export function startInkrailGame(canvas) {
       ctx.save();
       ctx.globalAlpha = Math.max(0, p.life / p.max);
       ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-      ctx.fill();
+      if (p.rect) {
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.fillRect(-p.size / 2, -p.size * 0.9, p.size, p.size * 1.8);
+      } else {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
   }
@@ -317,13 +351,54 @@ export function startInkrailGame(canvas) {
       ctx.globalAlpha = Math.min(1, frac * 1.6);
       ctx.font = 'bold ' + (p.big ? 26 : 21) + 'px system-ui, sans-serif';
       ctx.textAlign = 'center';
+      let px = p.x;
+      let py = p.y;
+      if (p.delivery) {
+        const placed = placeDeliveryPopup(ctx, p);
+        if (!placed) { ctx.restore(); continue; }
+        px = placed.x;
+        py = placed.y;
+      }
       ctx.lineWidth = 4;
       ctx.strokeStyle = 'rgba(30,41,59,0.85)';
-      ctx.strokeText(p.text, p.x, p.y);
+      ctx.strokeText(p.text, px, py);
       ctx.fillStyle = p.big ? '#FDE68A' : '#FFF7E0';
-      ctx.fillText(p.text, p.x, p.y);
+      ctx.fillText(p.text, px, py);
       ctx.restore();
     }
+  }
+
+  // Delivery popups (+N, inward-anchored) are clamped as measured glyph
+  // boxes — inflated 2px per side for the 4px stroke — inside x12–1268,
+  // y66–788, and kept out of station building/shadow boxes. Returns null
+  // when no horizontal interval survives (popup omitted that frame).
+  // Recalculated every render; p.y is never mutated; untagged popups
+  // (STREAK, WAVE CLEAR) are drawn as before.
+  function placeDeliveryPopup(ctx, p) {
+    const m = ctx.measureText(p.text);
+    const w = m.actualBoundingBoxLeft + m.actualBoundingBoxRight + 4;
+    const h = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent + 4;
+    if (w > 1256 || h > 722) return null;
+    let top = p.y - m.actualBoundingBoxAscent - 2;
+    top = Math.max(66, Math.min(top, 788 - h));
+    const bottom = top + h;
+    let lo = 12 + m.actualBoundingBoxLeft + 2;
+    let hi = 1268 - m.actualBoundingBoxRight - 2;
+    for (const s of state.stations) {
+      const sLeft = s.x - 64;
+      const sRight = s.x + 64;
+      const sTop = s.y - 64;
+      const sBottom = s.y + 50;
+      if (bottom > sTop && top < sBottom) {
+        if (s.x < FIELD.width / 2) lo = Math.max(lo, sRight + 12 + m.actualBoundingBoxLeft + 2);
+        else hi = Math.min(hi, sLeft - 12 - m.actualBoundingBoxRight - 2);
+      }
+    }
+    if (lo > hi) return null;
+    return {
+      x: Math.max(lo, Math.min(p.x, hi)),
+      y: top + m.actualBoundingBoxAscent + 2,
+    };
   }
 
   function bossTrain(st) {
@@ -443,31 +518,45 @@ export function startInkrailGame(canvas) {
         resetGame();
         return;
       }
+      if ((state.phase === 'play' || state.phase === 'paused') &&
+          inButton(x, y, 1160, 14, 104, 36)) {
+        sound.playClick();
+        togglePause();
+        return;
+      }
       if (state.phase === 'play') {
-        if (drawer.pointerDown(x, y)) sound.startScratch();
+        if (drawingPointerId === null && drawer.pointerDown(x, y)) {
+          drawingPointerId = e.pointerId;
+          canvas.setPointerCapture(e.pointerId);
+          sound.startScratch();
+        }
       }
     });
     canvas.addEventListener('pointermove', (e) => {
-      if (state.phase !== 'play') return;
+      if (state.phase !== 'play' || e.pointerId !== drawingPointerId) return;
       const r = rect();
       const x = (e.clientX - r.left) * (FIELD.width / r.width);
       const y = (e.clientY - r.top) * (FIELD.height / r.height);
       drawer.pointerMove(x, y);
       if (drawer.active && Math.random() < 0.4) sound.playDrawTick();
     });
-    canvas.addEventListener('pointerup', () => {
+    canvas.addEventListener('pointerup', (e) => {
+      if (e.pointerId !== drawingPointerId) return;
       sound.stopScratch();
       if (state.phase === 'play') drawer.pointerUp();
+      cancelDrawing();
+    });
+    canvas.addEventListener('pointercancel', (e) => {
+      if (e.pointerId === drawingPointerId) cancelDrawing();
+    });
+    canvas.addEventListener('lostpointercapture', (e) => {
+      if (e.pointerId === drawingPointerId) cancelDrawing();
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
-        if (state.phase === 'play') {
-          state.phase = 'paused';
-          drawer.active = null;
-          drawer.preview = null;
-        } else if (state.phase === 'paused') state.phase = 'play';
+        if (state.phase === 'play' || state.phase === 'paused') togglePause();
         else if (state.phase === 'start') startPlay();
       }
       if (e.code === 'KeyR' && state.phase !== 'start') resetGame();
@@ -504,6 +593,7 @@ export function startInkrailGame(canvas) {
     state.particles = [];
     state.popups = [];
     state.lastDeliveryAt = -99;
+    state.playTime = 0;
     state.pendingWave = false;
     state.endReason = '';
     state.deliveredByKind = { cargo: 0, express: 0, glass: 0, mail: 0, boss: 0 };
@@ -511,9 +601,12 @@ export function startInkrailGame(canvas) {
     state.inkUsed = 0;
     state.flash = 0;
     state.isNewBest = false;
+    state.nextGate = 0;
+    state.autoTimer = 0;
+    state.autopilot = false;
     drawer.tracks = [];
-    drawer.active = null;
-    drawer.preview = null;
+    cancelDrawing();
+    drawer.hint = '';
     director.wave = 0;
     director.spawnQueue = [];
     director.spawning = false;
@@ -523,8 +616,8 @@ export function startInkrailGame(canvas) {
     const q = new URLSearchParams(location.search);
     const shot = q.get('shot');
     if (shot === 'boss') {
-      state.autopilot = true;
       resetState();
+      state.autopilot = true;
       state.phase = 'play';
       state.score = 1850;
       state.delivered = 14;
@@ -534,13 +627,13 @@ export function startInkrailGame(canvas) {
       state.bestCombo = 3;
       state.inkUsed = 190;
       state.bestWave = 4;
-      state.lastDeliveryAt = 0;
+      state.lastDeliveryAt = state.playTime;
       director.wave = 4;
       state.wave = 4;
       director.startNextWave();
     } else if (shot === 'play') {
-      state.autopilot = true;
       startPlay();
+      state.autopilot = true;
     } else if (shot === 'end') {
       state.phase = 'gameover';
       state.score = 2840;

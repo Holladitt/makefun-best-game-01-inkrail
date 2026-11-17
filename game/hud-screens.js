@@ -20,7 +20,11 @@ export function drawHud(ctx, state) {
   ctx.font = 'bold 24px system-ui, sans-serif';
   ctx.fillText('WAVE ' + state.wave + '/' + RULES.waves, 18, 41);
   ctx.fillText('SCORE ' + state.score, 200, 41);
-  drawComboPill(ctx, state.combo, 380, 24);
+  drawComboPill(
+    ctx,
+    state.playTime - state.lastDeliveryAt < RULES.comboWindowSec ? state.combo : 0,
+    380, 24
+  );
   ctx.fillStyle = PALETTE.text;
   ctx.font = 'bold 24px system-ui, sans-serif';
   ctx.fillText('DELIVERED ' + state.delivered, 540, 40);
@@ -38,7 +42,7 @@ export function drawHud(ctx, state) {
   ctx.fillText('❚❚  PAUSE', 1212, 38);
   ctx.textAlign = 'left';
   drawWaveDots(ctx, state.wave, 18, 54);
-  drawWaitingIcons(ctx, state.trains || [], 170, 47);
+  drawWaitingIcons(ctx, state.trains || [], 228, 47);
   drawNextWave(ctx, state.wave, 700, 58);
   ctx.restore();
 }
@@ -100,16 +104,37 @@ export function drawWaitingIcons(ctx, trains, x, y) {
   ctx.save();
   ctx.font = 'bold 11px system-ui, sans-serif';
   ctx.textAlign = 'left';
+  ctx.fillStyle = PALETTE.text;
+  ctx.fillText('WAITING', 170, 58, 50);
+  const totalWidth = kinds.reduce(
+    (sum, kind) => sum + 29 + ctx.measureText('x' + counts[kind]).width,
+    0
+  );
+  ctx.save();
+  ctx.translate(228, 0);
+  ctx.scale(Math.min(1, (696 - 228) / totalWidth), 1);
+  ctx.translate(-228, 0);
   let cx = x;
   for (const kind of kinds) {
     const color = (TRAIN_KINDS[kind] || TRAIN_KINDS.cargo).color;
     ctx.fillStyle = color;
-    roundRectPath(ctx, cx, y, 14, 14, 3);
+    ctx.fillRect(cx, y + 4, 11, 7);
+    ctx.fillRect(cx + 2, y, 6, 5);
+    ctx.beginPath();
+    ctx.moveTo(cx + 11, y + 4);
+    ctx.lineTo(cx + 14, y + 7);
+    ctx.lineTo(cx + 11, y + 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + 3, y + 12, 2, 0, Math.PI * 2);
+    ctx.arc(cx + 10, y + 12, 2, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = PALETTE.text;
     ctx.fillText('x' + counts[kind], cx + 17, y + 11);
     cx += 17 + ctx.measureText('x' + counts[kind]).width + 12;
   }
+  ctx.restore();
   ctx.restore();
 }
 
@@ -125,8 +150,27 @@ export function drawNextWave(ctx, wave, x, y) {
     ctx.restore();
     return;
   }
-  const kinds = getWavePlan(wave + 1).kinds;
-  const shown = kinds.slice(0, 5);
+  const plan = getWavePlan(wave + 1);
+  const kinds = plan.kinds.slice();
+  if (wave + 1 === 10) kinds.unshift('express');
+  let count = Math.min(5, kinds.length);
+  const limit = plan.boss ? 826 : 842;
+  const overflowFor = (c) => (kinds.length > c ? '+' + (kinds.length - c) : '');
+  while (count > 0) {
+    const overflow = overflowFor(count);
+    if (x + 38 + count * 15 + ctx.measureText(overflow).width <= limit) break;
+    count -= 1;
+  }
+  // Final glyph-edge check BEFORE drawing anything: the overflow text's
+  // actual right edge must clear the limit; shrink count if it does not.
+  while (count > 0) {
+    const overflow = overflowFor(count);
+    if (!overflow) break;
+    const edge = x + 38 + count * 15 + ctx.measureText(overflow).actualBoundingBoxRight;
+    if (edge <= limit) break;
+    count -= 1;
+  }
+  const shown = kinds.slice(0, count);
   let dx = x + 38;
   for (const kind of shown) {
     ctx.fillStyle = (TRAIN_KINDS[kind] || TRAIN_KINDS.cargo).color;
@@ -138,6 +182,19 @@ export function drawNextWave(ctx, wave, x, y) {
   if (kinds.length > shown.length) {
     ctx.fillStyle = PALETTE.textSoft;
     ctx.fillText('+' + (kinds.length - shown.length), dx, y);
+  }
+  if (plan.boss) {
+    ctx.fillStyle = '#FDE68A';
+    ctx.beginPath();
+    ctx.moveTo(830, 58);
+    ctx.lineTo(830, 49);
+    ctx.lineTo(833, 53);
+    ctx.lineTo(836, 47);
+    ctx.lineTo(839, 53);
+    ctx.lineTo(842, 49);
+    ctx.lineTo(842, 58);
+    ctx.closePath();
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -217,7 +274,7 @@ export function drawStartScreen(ctx, state, time) {
   drawBigButton(ctx, FIELD.width / 2 - 130, 530, 260, 72, '▶  PLAY', time);
   ctx.font = '16px system-ui, sans-serif';
   ctx.fillStyle = 'rgba(30,41,59,0.85)';
-  const line = '10 waves · 3 train classes · the Midnight Express rides on waves 5 & 10';
+  const line = '10 waves · 5 train types · the Midnight Express rides on waves 5 & 10';
   const lw = ctx.measureText(line).width + 28;
   ctx.fillStyle = 'rgba(255,247,224,0.92)';
   roundRectPath(ctx, FIELD.width / 2 - lw / 2, 628, lw, 30, 15);
@@ -273,14 +330,103 @@ export function drawHowTo(ctx, cx, y) {
     ctx.font = 'bold 13px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(String(i + 1), x - 94, y + 21);
-    ctx.font = '34px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(item.icon, x, y + 40);
+    ctx.save();
+    ctx.translate(x, y);
+    if (i === 0) drawHowToDrag(ctx);
+    else if (i === 1) drawHowToColour(ctx);
+    else drawHowToErase(ctx);
+    ctx.restore();
     ctx.fillStyle = PALETTE.text;
     ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.textAlign = 'center';
     ctx.fillText(item.label, x, y + 68);
   });
   ctx.restore();
+}
+
+function drawHowToDrag(ctx) {
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 3;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-64, 38);
+  ctx.lineTo(-24, 38);
+  ctx.lineTo(12, 20);
+  ctx.lineTo(58, 20);
+  ctx.stroke();
+  ctx.fillStyle = PALETTE.ink;
+  ctx.beginPath();
+  ctx.moveTo(48, 12);
+  ctx.lineTo(54, 10);
+  ctx.lineTo(66, 28);
+  ctx.lineTo(60, 32);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#D97706';
+  ctx.beginPath();
+  ctx.moveTo(60, 32);
+  ctx.lineTo(66, 28);
+  ctx.lineTo(68, 38);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawHowToColour(ctx) {
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(-64, 24, 30, 14);
+  ctx.fillStyle = '#FFF7E0';
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 1.5;
+  ctx.fillRect(32, 24, 32, 18);
+  ctx.strokeRect(32, 24, 32, 18);
+  ctx.fillStyle = '#D97706';
+  ctx.beginPath();
+  ctx.moveTo(30, 24);
+  ctx.lineTo(48, 12);
+  ctx.lineTo(66, 24);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#D97706';
+  ctx.font = 'bold 9px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('AMBER', -49, 20, 44);
+  ctx.fillText('AMBER', 48, 36, 28);
+  ctx.strokeStyle = '#D97706';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-24, 32);
+  ctx.lineTo(24, 32);
+  ctx.moveTo(24, 32);
+  ctx.lineTo(18, 27);
+  ctx.moveTo(24, 32);
+  ctx.lineTo(18, 37);
+  ctx.stroke();
+}
+
+function drawHowToErase(ctx) {
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 3;
+  ctx.setLineDash([8, 5]);
+  ctx.beginPath();
+  ctx.moveTo(-64, 36);
+  ctx.lineTo(20, 36);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = PALETTE.ink;
+  ctx.lineWidth = 2;
+  roundRectPath(ctx, 34, 12, 26, 30, 8);
+  ctx.stroke();
+  ctx.fillStyle = '#DC2626';
+  ctx.fillRect(48, 15, 9, 10);
+  ctx.strokeStyle = '#DC2626';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-6, 26);
+  ctx.lineTo(6, 42);
+  ctx.moveTo(-6, 42);
+  ctx.lineTo(6, 26);
+  ctx.stroke();
 }
 
 export function drawBigButton(ctx, x, y, w, h, label, time) {
@@ -310,33 +456,47 @@ export function drawEndScreen(ctx, state, time) {
   ctx.save();
   ctx.fillStyle = 'rgba(30,41,59,0.55)';
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.strokeStyle = PALETTE.gold;
+  ctx.lineWidth = 2;
+  roundRectPath(ctx, 250, 154, 780, 490, 20);
+  ctx.fill();
+  ctx.stroke();
   ctx.textAlign = 'center';
   ctx.fillStyle = '#FFF7E0';
   ctx.font = 'bold 64px Georgia, serif';
-  ctx.fillText(victory ? 'ALL TRAINS HOME!' : 'GAME OVER', FIELD.width / 2, 230);
+  const titleText = victory ? 'ALL TRAINS HOME!' : 'GAME OVER';
+  ctx.fillText(titleText, FIELD.width / 2, 230, Math.min(740, ctx.measureText(titleText).width));
   ctx.font = '22px system-ui, sans-serif';
   ctx.fillStyle = '#FDE68A';
-  ctx.fillText(state.endReason || '', FIELD.width / 2, 272);
+  const reasonText = state.endReason || '';
+  ctx.fillText(reasonText, FIELD.width / 2, 272, Math.min(740, ctx.measureText(reasonText).width));
   ctx.fillStyle = '#FFF7E0';
-  ctx.font = 'bold 30px system-ui, sans-serif';
+  ctx.font = 'bold 40px system-ui, sans-serif';
   const scoreText = 'SCORE  ' + state.score;
   const scoreW = ctx.measureText(scoreText).width;
   let newBestW = 0;
   if (state.isNewBest) {
     ctx.font = 'bold 20px system-ui, sans-serif';
     newBestW = ctx.measureText('★ NEW BEST').width;
-    ctx.font = 'bold 30px system-ui, sans-serif';
+    ctx.font = 'bold 40px system-ui, sans-serif';
   }
   const groupW = scoreW + (state.isNewBest ? 16 + newBestW : 0);
+  ctx.save();
+  ctx.translate(FIELD.width / 2, 0);
+  ctx.scale(Math.min(1, 740 / groupW), 1);
+  ctx.translate(-FIELD.width / 2, 0);
   ctx.fillText(scoreText, FIELD.width / 2 - groupW / 2 + scoreW / 2, 345);
   if (state.isNewBest) {
     ctx.fillStyle = '#FDE68A';
     ctx.font = 'bold 20px system-ui, sans-serif';
     ctx.fillText('★ NEW BEST', FIELD.width / 2 - groupW / 2 + scoreW + 16 + newBestW / 2, 345);
   }
+  ctx.restore();
   ctx.fillStyle = '#FFF7E0';
   ctx.font = '22px system-ui, sans-serif';
-  ctx.fillText('Delivered ' + state.delivered + ' trains  ·  Reached wave ' + state.wave + '/' + RULES.waves, FIELD.width / 2, 382);
+  const deliveredText = 'Delivered ' + state.delivered + ' trains  ·  Reached wave ' + state.wave + '/' + RULES.waves;
+  ctx.fillText(deliveredText, FIELD.width / 2, 382, Math.min(740, ctx.measureText(deliveredText).width));
   ctx.font = '20px system-ui, sans-serif';
   for (let i = 0; i < RULES.waves; i += 1) {
     ctx.fillStyle = i < cleared ? '#D97706' : '#94A3B8';
@@ -347,12 +507,14 @@ export function drawEndScreen(ctx, state, time) {
   const perClass = 'CARGO ' + (byKind.cargo || 0) + '  ·  EXPRESS ' + (byKind.express || 0)
     + '  ·  GLASS ' + (byKind.glass || 0) + '  ·  MAIL ' + (byKind.mail || 0)
     + '  ·  BOSS ' + (byKind.boss || 0);
-  ctx.fillText(perClass, FIELD.width / 2, 442);
-  ctx.fillText('BEST COMBO x' + (state.bestCombo || 0) + '  ·  INK USED ' + (state.inkUsed || 0), FIELD.width / 2, 468);
+  ctx.fillText(perClass, FIELD.width / 2, 442, Math.min(740, ctx.measureText(perClass).width));
+  const statsText = 'BEST COMBO x' + (state.bestCombo || 0) + '  ·  INK USED ' + Math.round(state.inkUsed || 0);
+  ctx.fillText(statsText, FIELD.width / 2, 468, Math.min(740, ctx.measureText(statsText).width));
   drawBigButton(ctx, FIELD.width / 2 - 150, 500, 300, 72, '↻  RESTART', time);
   ctx.font = '16px system-ui, sans-serif';
   ctx.fillStyle = 'rgba(255,247,224,0.85)';
-  ctx.fillText('Press R or click RESTART to play again', FIELD.width / 2, 620);
+  const hintText = 'Press R or click RESTART to play again';
+  ctx.fillText(hintText, FIELD.width / 2, 620, Math.min(740, ctx.measureText(hintText).width));
   ctx.restore();
 }
 

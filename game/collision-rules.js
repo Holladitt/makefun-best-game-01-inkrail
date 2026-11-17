@@ -40,7 +40,7 @@ export function checkExpressTimers(trains, dt, onTimeout) {
 }
 
 export function scoreDelivery(state, train) {
-  const now = state.time;
+  const now = state.playTime;
   if (now - state.lastDeliveryAt < RULES.comboWindowSec) {
     state.combo = Math.min(RULES.maxCombo, state.combo + 1);
   } else {
@@ -64,6 +64,7 @@ export function resolveTrainLost(state, train, reason) {
   train.lost = true;
   train.lostReason = reason;
   train.moving = false;
+  if (state.phase === 'start') return;
   state.lives -= 1;
   state.combo = 0;
   if (state.lives <= 0) {
