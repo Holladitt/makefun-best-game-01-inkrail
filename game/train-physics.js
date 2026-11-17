@@ -160,12 +160,62 @@ export function trackLengthOf(track) {
 
 function drawLoco(ctx, spec, isBoss) {
   const w = isBoss ? 44 : 36;
-  const h = 22;
+  const h = spec.kind === 'express' ? 18 : 22;
   ctx.fillStyle = '#111827';
   ctx.fillRect(-w / 2 + 2, -h / 2 + 2, w, h);
   ctx.fillStyle = spec.color;
   roundRect(ctx, -w / 2, -h / 2, w, h, 6);
   ctx.fill();
+  if (spec.kind === 'express') {
+    ctx.fillStyle = spec.color;
+    ctx.beginPath();
+    ctx.moveTo(w / 2, -h / 2 + 3);
+    ctx.lineTo(w / 2 + 9, 0);
+    ctx.lineTo(w / 2, h / 2 - 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+    ctx.lineWidth = 2;
+    for (const ly of [-7, 7]) {
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 - 16, ly);
+      ctx.lineTo(-w / 2 - 4, ly);
+      ctx.stroke();
+    }
+  }
+  if (spec.kind === 'glass') {
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.moveTo(-4, -h / 2);
+    ctx.lineTo(4, -h / 2);
+    ctx.lineTo(-4, h / 2);
+    ctx.lineTo(-12, h / 2);
+    ctx.closePath();
+    ctx.fill();
+  }
+  if (spec.kind === 'mail') {
+    ctx.fillStyle = '#FFF7E0';
+    ctx.fillRect(-7, -5, 14, 10);
+    ctx.strokeStyle = '#111827';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-7, -5);
+    ctx.lineTo(0, 1);
+    ctx.lineTo(7, -5);
+    ctx.stroke();
+  }
+  if (spec.kind === 'cargo') {
+    ctx.fillStyle = '#8B5E34';
+    ctx.fillRect(-12, -h / 2 - 9, 24, 9);
+    ctx.strokeStyle = '#5C3413';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-12, -h / 2 - 9);
+    ctx.lineTo(12, -h / 2);
+    ctx.moveTo(12, -h / 2 - 9);
+    ctx.lineTo(-12, -h / 2);
+    ctx.stroke();
+  }
   ctx.fillStyle = '#FFF7E0';
   ctx.fillRect(w / 2 - 12, -h / 2 + 4, 8, 8);
   ctx.fillStyle = '#111827';
@@ -191,6 +241,8 @@ function drawLoco(ctx, spec, isBoss) {
   ctx.fill();
   if (isBoss) {
     ctx.fillStyle = '#FDE68A';
+    ctx.fillRect(-w / 2 + 4, h / 2 - 5, w - 8, 3);
+    ctx.fillStyle = '#FDE68A';
     ctx.strokeStyle = '#B45309';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -212,15 +264,42 @@ function drawLoco(ctx, spec, isBoss) {
 }
 
 function drawCar(ctx, spec) {
+  const ch = spec.kind === 'express' ? 14 : 18;
   ctx.fillStyle = '#111827';
-  ctx.fillRect(-13, -8, 28, 18);
+  ctx.fillRect(-13, -ch / 2 + 1, 28, ch);
   ctx.fillStyle = spec.color;
   ctx.globalAlpha = 0.85;
-  roundRect(ctx, -14, -9, 28, 18, 4);
+  roundRect(ctx, -14, -ch / 2, 28, ch, 4);
   ctx.fill();
   ctx.globalAlpha = 1;
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.fillRect(-8, -5, 16, 4);
+  if (spec.kind === 'cargo') {
+    ctx.fillStyle = '#8B5E34';
+    ctx.fillRect(-10, -ch / 2 - 5, 20, 5);
+  } else if (spec.kind === 'glass') {
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.moveTo(-2, -ch / 2);
+    ctx.lineTo(4, -ch / 2);
+    ctx.lineTo(-2, ch / 2);
+    ctx.lineTo(-8, ch / 2);
+    ctx.closePath();
+    ctx.fill();
+  } else if (spec.kind === 'mail') {
+    ctx.fillStyle = '#FFF7E0';
+    ctx.fillRect(-6, -4, 12, 8);
+    ctx.strokeStyle = '#111827';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-6, -4);
+    ctx.lineTo(0, 1);
+    ctx.lineTo(6, -4);
+    ctx.stroke();
+  } else if (spec.kind === 'boss') {
+    ctx.fillStyle = '#FDE68A';
+    ctx.fillRect(-14, ch / 2 - 4, 28, 3);
+  }
 }
 
 function drawSmoke(ctx, train, time) {
@@ -232,7 +311,7 @@ function drawSmoke(ctx, train, time) {
     const px = bx - Math.cos(train.angle) * puff * 42;
     const py = by - Math.sin(train.angle) * puff * 42 - puff * 26;
     ctx.globalAlpha = 0.65 * (1 - puff);
-    ctx.fillStyle = '#FFFFFF';
+    ctx.fillStyle = train.kind === 'boss' ? '#6B7280' : '#FFFFFF';
     ctx.beginPath();
     ctx.arc(px, py, 4 + puff * 8, 0, Math.PI * 2);
     ctx.fill();

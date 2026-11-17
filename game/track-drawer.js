@@ -69,6 +69,8 @@ export function createTrackDrawer(state) {
       return null;
     }
     state.ink -= cost;
+    state.inkUsed += cost;
+    if (state.ink < 0.01) state.ink = 0;
     const track = {
       id: state.nextTrackId += 1, trainId: train.id, kind: train.kind,
       points: smooth, length: realLength, cost, stationId: snapped.stationId || null,
@@ -118,6 +120,8 @@ export function createTrackDrawer(state) {
     const cost = trackLength(smooth) * INK.costPerPx;
     if (cost > state.ink) return false;
     state.ink -= cost;
+    state.inkUsed += cost;
+    if (state.ink < 0.01) state.ink = 0;
     track.points = track.points.concat(smooth.slice(1));
     track.length = track.length + trackLength(smooth);
     track.totalLength = undefined;

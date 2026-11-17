@@ -6,6 +6,15 @@ import { checkDelivery, checkExpressTimers, checkTrainCollisions, resolveTrainLo
 import { drawBanner, drawEndScreen, drawHud, drawPauseOverlay, drawStartScreen } from './hud-screens.js';
 import { createSoundSynth } from './sound-synth.js';
 
+// Precomputed river geometry (static): segment lengths for the animated flow dashes.
+const RIVER_LENS = [];
+let RIVER_TOTAL = 0;
+for (let i = 0; i < DECOR.river.length - 1; i += 1) {
+  const segLen = Math.hypot(DECOR.river[i + 1][0] - DECOR.river[i][0], DECOR.river[i + 1][1] - DECOR.river[i][1]);
+  RIVER_LENS.push(segLen);
+  RIVER_TOTAL += segLen;
+}
+
 // INKRAIL — main-loop.js
 // The game itself: state, map rendering, input, the frame loop, particles,
 // the start-screen live demo, the autopilot (demo + screenshot modes) and
@@ -31,9 +40,25 @@ export function startInkrailGame(canvas) {
       lives: RULES.lives, ink: INK.max, wave: 0, lastDeliveryAt: -99,
       trains: [], stations: STATIONS, nextTrainId: 1, nextTrackId: 1,
       nextGate: 0, pendingWave: false, endReason: '',
-      best: readBest(),
+      best: readBest(), bestWave: readBestWave(), isNewBest: false,
+      deliveredByKind: { cargo: 0, express: 0, glass: 0, mail: 0, boss: 0 },
+      bestCombo: 0, inkUsed: 0, flash: 0,
       particles: [], popups: [], demo: true, autopilot: false, autoTimer: 0,
     };
+  }
+
+  function readBestWave() {
+    try {
+      return Number(localStorage.getItem('inkrail-best-wave') || 0);
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function saveBestWave(value) {
+    try {
+      localStorage.setItem('inkrail-best-wave', String(value));
+    } catch (e) { /* storage unavailable: best wave just is not kept */ }
   }
 
   function readBest() {
@@ -67,7 +92,14 @@ export function startInkrailGame(canvas) {
   }
 
   function update(game, dt) {
-    state.ink = Math.min(INK.max, state.ink + INK.regenPerSec * dt);
+    state.ink = Math.min(INK.max, Math.max(0, state.ink + INK.regenPerSec * dt));
+    if (state.ink < 0.01) state.ink = 0;
+    if (INK.max - state.ink < 0.01) state.ink = INK.max;
+    if (state.flash > 0) state.flash = Math.max(0, state.flash - dt * 2.8);
+    if (state.wave > state.bestWave) {
+      state.bestWave = state.wave;
+      saveBestWave(state.bestWave);
+    }
     director.update(dt);
     if (state.pendingWave) {
       director.betweenTimer -= dt;
@@ -106,9 +138,14 @@ export function startInkrailGame(canvas) {
     updateParticles(dt);
     updatePopups(dt);
     if (state.phase === 'gameover' || state.phase === 'victory') {
+      state.isNewBest = state.score > state.best;
       if (state.score > state.best) {
         state.best = state.score;
         saveBest(state.best);
+      }
+      if (state.wave > state.bestWave) {
+        state.bestWave = state.wave;
+        saveBestWave(state.bestWave);
       }
       if (game.lastPhase !== state.phase) {
         if (state.phase === 'victory') sound.playVictory();
@@ -127,17 +164,53 @@ export function startInkrailGame(canvas) {
     if (checkDelivery(train, track, state)) {
       train.delivered = true;
       const gained = scoreDelivery(state, train);
+      state.deliveredByKind[train.kind] = (state.deliveredByKind[train.kind] || 0) + 1;
+      if (state.combo > state.bestCombo) state.bestCombo = state.combo;
       const comboText = state.combo > 1 ? ' COMBO x' + state.combo + '!' : '';
       state.popups.push({
         x: train.x, y: train.y - 44, text: '+' + gained + comboText,
         life: POPUP.lifeSec, max: POPUP.lifeSec, big: state.combo > 1,
       });
-      burst(train.x, train.y, train.spec.color, 22);
-      burst(train.x, train.y, '#FDE68A', 14);
+      if (state.combo >= 3) {
+        state.popups.push({
+          x: FIELD.width / 2, y: 180, text: 'STREAK x' + state.combo + '!',
+          life: POPUP.lifeSec, max: POPUP.lifeSec, big: true,
+        });
+      }
+      burst(train.x, train.y, train.spec.color, 26);
+      burst(train.x, train.y, '#FDE68A', 18);
+      confetti(train.x, train.y, 22);
+      inkSplash(train.x, train.y, train.station.color);
+      state.flash = 0.3;
       sound.playDing();
       state.trains = state.trains.filter((t) => t !== train);
       director.onTrainResolved();
       void gained;
+    }
+  }
+
+  function confetti(x, y, n) {
+    for (let i = 0; i < n; i += 1) {
+      const a = -Math.PI / 2 + (Math.random() - 0.5) * 1.8;
+      const sp = 90 + Math.random() * 160;
+      state.particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 0.9 + Math.random() * 0.6, max: 1.5,
+        color: PALETTE.confetti[i % PALETTE.confetti.length],
+        size: 3 + Math.random() * 3, rect: true, rot: Math.random() * Math.PI,
+      });
+    }
+  }
+
+  function inkSplash(x, y, color) {
+    for (let i = 0; i < 10; i += 1) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 30 + Math.random() * 70;
+      state.particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 20,
+        life: 0.5 + Math.random() * 0.4, max: 0.9, color,
+        size: 2 + Math.random() * 3,
+      });
     }
   }
 
@@ -206,12 +279,16 @@ export function startInkrailGame(canvas) {
     }
     drawParticles(ctx);
     drawPopups(ctx);
+    const boss = state.phase === 'play' ? bossTrain(state) : null;
+    drawBossVignette(ctx, boss, state.time);
+    if (state.flash > 0 && state.phase === 'play') drawFlash(ctx, state.flash);
     if (state.phase === 'play' || state.phase === 'paused') drawHud(ctx, state);
+    drawBossBar(ctx, state, boss);
     drawBanner(ctx, director.banner, director.bannerTimer);
     if (state.phase === 'start') drawStartScreen(ctx, state, state.time);
     if (state.phase === 'paused') drawPauseOverlay(ctx, state);
     if (state.phase === 'victory' || state.phase === 'gameover') drawEndScreen(ctx, state, state.time);
-    if (drawer.hint) {
+    if (drawer.hint && !boss) {
       ctx.save();
       ctx.fillStyle = '#DC2626';
       ctx.font = 'bold 17px system-ui, sans-serif';
@@ -247,6 +324,71 @@ export function startInkrailGame(canvas) {
       ctx.fillText(p.text, p.x, p.y);
       ctx.restore();
     }
+  }
+
+  function bossTrain(st) {
+    return st.trains.find((t) => t.kind === 'boss' && !t.delivered && !t.lost);
+  }
+
+  function drawBossVignette(ctx, boss, time) {
+    if (!boss) return;
+    const a = 0.10 + Math.sin(time * 4) * 0.04;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(220,38,38,' + a.toFixed(3) + ')';
+    ctx.lineWidth = 26;
+    ctx.strokeRect(13, 13, FIELD.width - 26, FIELD.height - 26);
+    ctx.restore();
+  }
+
+  function drawFlash(ctx, flash) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(0.6, flash);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+    ctx.restore();
+  }
+
+  function drawBossBar(ctx, state, boss) {
+    if (!boss) return;
+    const track = boss.trackId ? drawer.tracks.find((t) => t.id === boss.trackId) : null;
+    let pct = 0;
+    let label = 'BOSS APPROACHING';
+    if (track && track.totalLength > 0) {
+      pct = Math.max(0, Math.min(1, boss.distance / track.totalLength));
+      label = '★ MIDNIGHT EXPRESS ★';
+    }
+    const phase = pct < 0.34 ? 1 : pct < 0.67 ? 2 : 3;
+    const x = 440, y = 742, w = 400, h = 30;
+    ctx.save();
+    ctx.fillStyle = 'rgba(17,24,39,0.88)';
+    roundRectPath(ctx, x, y, w, h, 8);
+    ctx.fill();
+    if (pct > 0) {
+      ctx.fillStyle = '#DC2626';
+      roundRectPath(ctx, x + 3, y + 3, (w - 6) * pct, h - 6, 5);
+      ctx.fill();
+    }
+    ctx.strokeStyle = phase >= 3 ? '#FDE68A' : '#FCA5A5';
+    ctx.lineWidth = 2;
+    roundRectPath(ctx, x, y, w, h, 8);
+    ctx.stroke();
+    ctx.fillStyle = '#FFF7E0';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x + w / 2 - 24, y + 20);
+    for (let i = 0; i < 3; i += 1) {
+      const px = x + w - 34 + i * 14;
+      const py = y + h / 2;
+      ctx.fillStyle = i < phase ? '#FDE68A' : 'rgba(255,247,224,0.35)';
+      ctx.beginPath();
+      ctx.moveTo(px, py - 6);
+      ctx.lineTo(px + 6, py);
+      ctx.lineTo(px, py + 6);
+      ctx.lineTo(px - 6, py);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   function drawBossTarget(ctx, state, time) {
@@ -321,8 +463,11 @@ export function startInkrailGame(canvas) {
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
-        if (state.phase === 'play') state.phase = 'paused';
-        else if (state.phase === 'paused') state.phase = 'play';
+        if (state.phase === 'play') {
+          state.phase = 'paused';
+          drawer.active = null;
+          drawer.preview = null;
+        } else if (state.phase === 'paused') state.phase = 'play';
         else if (state.phase === 'start') startPlay();
       }
       if (e.code === 'KeyR' && state.phase !== 'start') resetGame();
@@ -361,6 +506,11 @@ export function startInkrailGame(canvas) {
     state.lastDeliveryAt = -99;
     state.pendingWave = false;
     state.endReason = '';
+    state.deliveredByKind = { cargo: 0, express: 0, glass: 0, mail: 0, boss: 0 };
+    state.bestCombo = 0;
+    state.inkUsed = 0;
+    state.flash = 0;
+    state.isNewBest = false;
     drawer.tracks = [];
     drawer.active = null;
     drawer.preview = null;
@@ -380,6 +530,10 @@ export function startInkrailGame(canvas) {
       state.delivered = 14;
       state.combo = 3;
       state.lives = 3;
+      state.deliveredByKind = { cargo: 6, express: 3, glass: 3, mail: 2, boss: 0 };
+      state.bestCombo = 3;
+      state.inkUsed = 190;
+      state.bestWave = 4;
       state.lastDeliveryAt = 0;
       director.wave = 4;
       state.wave = 4;
@@ -395,8 +549,14 @@ export function startInkrailGame(canvas) {
       state.lives = 0;
       state.endReason = 'The Express ran out of time!';
       state.best = 3120;
+      state.bestWave = 7;
+      state.deliveredByKind = { cargo: 9, express: 5, glass: 4, mail: 3, boss: 0 };
+      state.bestCombo = 4;
+      state.inkUsed = 312;
     } else if (shot === 'start') {
       state.demo = true;
+      state.best = 2840;
+      state.bestWave = 7;
       director.startNextWave();
     }
     if (q.get('demo') === '1') {
@@ -417,8 +577,72 @@ export function drawMap(ctx, time) {
     ctx.ellipse(320 + i * 30, 420, 180 + i * 46, 120 + i * 30, 0.25, 0, Math.PI * 2);
     ctx.stroke();
   }
-  drawRiver(ctx);
+  for (const [x, y, rx, ry] of DECOR.hills) drawHill(ctx, x, y, rx, ry);
+  drawRiver(ctx, time);
+  for (const [x, y, n] of DECOR.forests) drawForest(ctx, x, y, n);
   for (const [x, y] of DECOR.pines) drawPine(ctx, x, y);
+  for (const town of DECOR.towns) drawTown(ctx, town.x, town.y, town.n);
+  for (const [x, y, s] of DECOR.clouds) drawCloud(ctx, x, y, s, time);
+  ctx.restore();
+}
+
+export function drawHill(ctx, x, y, rx, ry) {
+  ctx.save();
+  ctx.fillStyle = PALETTE.hill;
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 0.35;
+  ctx.strokeStyle = PALETTE.contour;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx * 0.55, ry * 0.55, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+export function drawForest(ctx, x, y, n) {
+  for (let i = 0; i < n; i += 1) {
+    const ox = (i % 2 === 0 ? -1 : 1) * (i * 9);
+    const oy = (i < 2 ? 0 : 14) + (i % 2) * 6;
+    drawPine(ctx, x + ox, y + oy);
+  }
+}
+
+export function drawTown(ctx, x, y, n) {
+  ctx.save();
+  for (let i = 0; i < n; i += 1) {
+    const hx = x + (i - 1) * 26;
+    const hy = y + (i % 2) * 12;
+    ctx.fillStyle = PALETTE.townWall;
+    ctx.strokeStyle = PALETTE.wood;
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(hx - 8, hy - 6, 16, 12);
+    ctx.strokeRect(hx - 8, hy - 6, 16, 12);
+    ctx.fillStyle = PALETTE.townRoof;
+    ctx.beginPath();
+    ctx.moveTo(hx - 10, hy - 6);
+    ctx.lineTo(hx, hy - 14);
+    ctx.lineTo(hx + 10, hy - 6);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+export function drawCloud(ctx, x, y, s, time) {
+  const drift = (time * 6 * s) % (FIELD.width + 240);
+  let cx = x + drift - 120;
+  if (cx > FIELD.width + 120) cx -= FIELD.width + 240;
+  if (cx < -120) cx += FIELD.width + 240;
+  ctx.save();
+  ctx.fillStyle = PALETTE.cloud;
+  ctx.beginPath();
+  ctx.ellipse(cx, y, 42 * s, 14 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + 26 * s, y + 4 * s, 30 * s, 11 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx - 26 * s, y + 5 * s, 26 * s, 10 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -428,7 +652,7 @@ export function drawStations(ctx, time, tracks) {
   ctx.restore();
 }
 
-export function drawRiver(ctx) {
+export function drawRiver(ctx, time) {
   ctx.save();
   ctx.strokeStyle = PALETTE.river;
   ctx.lineWidth = 34;
@@ -442,7 +666,30 @@ export function drawRiver(ctx) {
   ctx.beginPath();
   DECOR.river.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
   ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  for (let i = 0; i < 8; i += 1) {
+    const p = riverPointAt((time * 0.03 + i / 8) % 1);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
+}
+
+function riverPointAt(frac) {
+  const pts = DECOR.river;
+  let d = frac * RIVER_TOTAL;
+  for (let i = 0; i < RIVER_LENS.length; i += 1) {
+    if (d <= RIVER_LENS[i]) {
+      const t = RIVER_LENS[i] === 0 ? 0 : d / RIVER_LENS[i];
+      return {
+        x: pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t,
+        y: pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t,
+      };
+    }
+    d -= RIVER_LENS[i];
+  }
+  return { x: pts[pts.length - 1][0], y: pts[pts.length - 1][1] };
 }
 
 export function drawPine(ctx, x, y) {
